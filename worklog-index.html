@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Work Log</title>
+<style>
+  :root { --bg:#f6f5f1; --card:#fff; --fg:#222; --muted:#777; --line:#e3e1d8; --accent:#2f6f8f; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151719; --card:#202326; --fg:#e8e8e4; --muted:#8b9095; --line:#2e3236; --accent:#6db3d6; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 system-ui,sans-serif; }
+  main { max-width:720px; margin:0 auto; padding:2rem 1rem; }
+  h1 { font-weight:500; margin:0 0 1rem; } h2 { font-size:1rem; margin:1.5rem 0 .5rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:1rem; }
+  form { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
+  form .wide { grid-column:1 / -1; }
+  input,select,button { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:.5rem .6rem; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  .bar-row { display:flex; align-items:center; gap:.6rem; margin:.35rem 0; font-size:.9rem; }
+  .bar-row span:first-child { width:110px; } .bar { height:10px; background:var(--accent); border-radius:5px; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  td,th { text-align:left; padding:.4rem .3rem; border-top:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; border-top:0; }
+  .top { display:flex; justify-content:space-between; align-items:center; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top"><h1>Work Log</h1><button id="export">Export CSV</button></div>
+
+  <form id="form" class="card">
+    <input id="date" type="date" required>
+    <select id="cat"></select>
+    <input id="desc" class="wide" placeholder="What did you work on?" required autocomplete="off">
+    <input id="hours" type="number" min="0.25" step="0.25" placeholder="Hours" required>
+    <button>Add entry</button>
+  </form>
+
+  <h2>This week: <span id="total"></span></h2>
+  <div class="card" id="summary"></div>
+
+  <h2>All entries</h2>
+  <div class="card"><table id="table"></table></div>
+</main>
+<script>
+  const KEY = "worklog.entries";
+  const CATS = ["Meetings", "Development", "Admin", "Learning"];
+  const $ = (id) => document.getElementById(id);
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; }
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(entries)); } catch (e) { console.error(e); }
+  }
+  let entries = load(); // { id, date, cat, desc, hours }
+
+  const iso = (d) => d.toLocaleDateString("en-CA"); // YYYY-MM-DD
+  function weekStart() {
+    const d = new Date();
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // back to Monday
+    return iso(d);
+  }
+
+  function renderSummary() {
+    const start = weekStart();
+    const week = entries.filter((e) => e.date >= start);
+    const sums = Object.fromEntries(CATS.map((c) => [c, 0]));
+    week.forEach((e) => { sums[e.cat] += e.hours; });
+    const max = Math.max(1, ...Object.values(sums));
+    const total = week.reduce((s, e) => s + e.hours, 0);
+    $("total").textContent = total.toFixed(2).replace(/\.?0+$/, "") + " h";
+    $("summary").replaceChildren(...CATS.map((c) => {
+      const row = document.createElement("div");
+      row.className = "bar-row";
+      const label = document.createElement("span");
+      label.textContent = c;
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      bar.style.width = (sums[c] / max) * 60 + "%";
+      const val = document.createElement("span");
+      val.textContent = sums[c] + " h";
+      row.append(label, bar, val);
+      return row;
+    }));
+  }
+
+  function renderTable() {
+    const table = $("table");
+    table.replaceChildren();
+    const head = table.insertRow();
+    ["Date", "Category", "Description", "Hours", ""].forEach((h) => {
+      const th = document.createElement("th");
+      th.textContent = h;
+      head.append(th);
+    });
+    [...entries].sort((a, b) => b.date.localeCompare(a.date)).forEach((e) => {
+      const tr = table.insertRow();
+      [e.date, e.cat, e.desc, e.hours].forEach((v) => { tr.insertCell().textContent = v; });
+      const del = document.createElement("button");
+      del.textContent = "✕";
+      del.onclick = () => { entries = entries.filter((x) => x.id !== e.id); save(); render(); };
+      tr.insertCell().append(del);
+    });
+  }
+
+  function render() { renderSummary(); renderTable(); }
+
+  function exportCsv() {
+    const q = (v) => '"' + String(v).replace(/"/g, '""') + '"';
+    const rows = [["Date", "Category", "Description", "Hours"], ...entries.map((e) => [e.date, e.cat, e.desc, e.hours])];
+    const blob = new Blob([rows.map((r) => r.map(q).join(",")).join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "work-log.csv";
+    a.click();
+  }
+
+  CATS.forEach((c) => $("cat").append(new Option(c, c)));
+  $("date").value = iso(new Date());
+  $("form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    entries.push({ id: Date.now(), date: $("date").value, cat: $("cat").value,
+                   desc: $("desc").value.trim(), hours: parseFloat($("hours").value) });
+    $("desc").value = ""; $("hours").value = "";
+    save(); render();
+  });
+  $("export").onclick = exportCsv;
+  render();
+</script>
+</body>
+</html>
